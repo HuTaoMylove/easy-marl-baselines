@@ -99,18 +99,18 @@ class PPO:
         dones = torch.tensor(transition_dict['dones'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
         rewards = torch.tensor(transition_dict['rewards'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
 
-        if transition_dict1 is not None:
-            states1 = torch.tensor(transition_dict1['states'], dtype=torch.float).to(self.device)  # [b,n_states]
-            actions1 = torch.tensor(transition_dict1['actions']).view(-1, 1).to(self.device)  # [b,1]
-            next_states1 = torch.tensor(transition_dict1['next_states'], dtype=torch.float).to(
-                self.device)  # [b,n_states]
-            dones1 = torch.tensor(transition_dict1['dones'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
-            rewards1 = torch.tensor(transition_dict1['rewards'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
-            states = torch.concat([states, states1], dim=0)
-            actions = torch.concat([actions, actions1], dim=0)
-            next_states = torch.concat([next_states, next_states1], dim=0)
-            dones = torch.concat([dones, dones1], dim=0)
-            rewards = torch.concat([rewards, rewards1], dim=0)
+        states1 = torch.tensor(transition_dict1['states'], dtype=torch.float).to(self.device)  # [b,n_states]
+        actions1 = torch.tensor(transition_dict1['actions']).view(-1, 1).to(self.device)  # [b,1]
+        next_states1 = torch.tensor(transition_dict1['next_states'], dtype=torch.float).to(
+            self.device)  # [b,n_states]
+        dones1 = torch.tensor(transition_dict1['dones'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
+        rewards1 = torch.tensor(transition_dict1['rewards'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
+
+        states = torch.concat([states, states1], dim=0)
+        actions = torch.concat([actions, actions1], dim=0)
+        next_states = torch.concat([next_states, next_states1], dim=0)
+        dones = torch.concat([dones, dones1], dim=0)
+        rewards = torch.concat([rewards, rewards1], dim=0)
 
         with torch.no_grad():
             next_state_value = self.critic(next_states)  # 下一时刻的state_value  [b,1]
@@ -129,10 +129,10 @@ class PPO:
             advantage = torch.tensor(np.array(advantage_list), dtype=torch.float).to(self.device)
             old_log_probs = torch.log(self.actor(states).gather(1, actions))  # [b,1]
 
-        dataset=MyDataset(states,actions,old_log_probs,advantage,td_target)
-        dataloader=DataLoader(dataset=dataset, batch_size=100, shuffle=True, drop_last=True)
-        for i in range(2):
-            for step,(states,actions,old_log_probs,advantage,td_target) in enumerate(dataloader):
+        dataset = MyDataset(states, actions, old_log_probs, advantage, td_target)
+        dataloader = DataLoader(dataset=dataset, batch_size=50, shuffle=True, drop_last=False)
+        for i in range(4):
+            for step, (states, actions, old_log_probs, advantage, td_target) in enumerate(dataloader):
                 probs = self.actor(states)
                 log_prob = torch.log(probs.gather(1, actions))
                 entropy = torch.distributions.Categorical(probs).entropy().mean()
@@ -150,16 +150,16 @@ class PPO:
                 self.critic_optimizer.zero_grad()
                 actor_loss.backward()
                 critic_loss.backward()
-                nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
-                nn.utils.clip_grad_norm_(self.critic.parameters(), 0.5)
+                nn.utils.clip_grad_norm_(self.actor.parameters(), 1)
+                nn.utils.clip_grad_norm_(self.critic.parameters(), 1)
                 self.actor_optimizer.step()
                 self.critic_optimizer.step()
 
         train_info = {
-            "ratio": ratio.detach().mean().cpu().item(),
-            "actor_loss": actor_loss.detach().cpu().item(),
-            "critic_loss": critic_loss.detach().cpu().item(),
-            'entropy': entropy.detach().cpu().item()
+                    "ratio": ratio.detach().mean().cpu().item(),
+                    "actor_loss": actor_loss.detach().cpu().item(),
+                    "critic_loss": critic_loss.detach().cpu().item(),
+                    'entropy': entropy.detach().cpu().item()
         }
 
         return train_info
