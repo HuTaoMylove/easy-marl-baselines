@@ -29,7 +29,7 @@ class MappoDataset(Dataset):
 
 
 class MAPPO:
-    def __init__(self, n_states, n_actions, device, n_hiddens=128, actor_lr=3e-4, critic_lr=1e-3):
+    def __init__(self, n_states, n_actions, device, n_agent=2, n_hiddens=128, actor_lr=3e-4, critic_lr=1e-3):
         # 属性分配
         self.n_hiddens = n_hiddens
         self.actor_lr = actor_lr  # 策略网络的学习率
@@ -37,6 +37,7 @@ class MAPPO:
         self.lmbda = 0.97  # 优势函数的缩放因子
         self.eps = 0.2  # ppo截断范围缩放因子
         self.gamma = 0.9  # 折扣因子
+        self.n_agent = n_agent
         self.device = device
         # 网络实例化
         self.actor = PolicyNet(n_states, n_hiddens, n_actions).to(device)  # 策略网络
@@ -46,47 +47,51 @@ class MAPPO:
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
 
     # 动作选择
-    def take_action(self, state, isTrain=True):  # [n_states]
-
-        state = torch.tensor([state], dtype=torch.float).to(self.device)  # [1,n_states]
-        probs = self.actor(state)  # 当前状态的动作概率 [b,n_actions]
-        if isTrain:
+    def take_action(self, obs, isTrain=True):  # [n_states]
+        with torch.no_grad():
+            obs = torch.tensor(obs, dtype=torch.float).to(self.device)  # [n_agents,n_states]
+            probs = self.actor(obs)  # 当前状态的动作概率 [b,n_actions]
             action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
-            action = action_dist.sample().item()  # 从概率分布中随机取样 int
-        else:
-            action = torch.argmax(probs).item()
-        return action
+            if isTrain:
+                action = action_dist.sample()  # 从概率分布中随机取样 int
+            else:
+                action = torch.argmax(probs, dim=-1)
+            action_log_prob = action_dist.log_prob(action)
+            obs_value = self.critic(torch.cat(torch.split(obs, 1, dim=0), dim=1))
+
+            return action.reshape(self.n_agent, -1), action_log_prob.reshape(self.n_agent, -1), \
+                   torch.cat([obs_value] * self.n_agent, dim=0).reshape(self.n_agent, -1)
+
+    def reset(self):
+        return
 
     # 训练
-    def update(self, transition_dict, transition_dict1=None):
+    def update(self, data):
 
         # 取出数据集
-        states = torch.tensor(transition_dict['states'], dtype=torch.float).to(self.device)  # [b,n_states]
-        actions = torch.tensor(transition_dict['actions']).view(-1, 1).to(self.device)  # [b,1]
-        next_states = torch.tensor(transition_dict['next_states'], dtype=torch.float).to(self.device)  # [b,n_states]
-        dones = torch.tensor(transition_dict['dones'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
-        rewards = torch.tensor(transition_dict['rewards'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
+        obs, next_obs, obs_value, action, action_log_prob, reward, done, eposide_idx = data
 
-        states1 = torch.tensor(transition_dict1['states'], dtype=torch.float).to(self.device)  # [b,n_states]
-        actions1 = torch.tensor(transition_dict1['actions']).view(-1, 1).to(self.device)  # [b,1]
-        next_states1 = torch.tensor(transition_dict1['next_states'], dtype=torch.float).to(
-            self.device)  # [b,n_states]
-        dones1 = torch.tensor(transition_dict1['dones'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
-        rewards1 = torch.tensor(transition_dict1['rewards'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
+        obs_a = obs.permute(1, 0, 2).reshape(-1, obs.shape[-1]).to(self.device)
+        obs_v = torch.cat(torch.split(obs.permute(1, 0, 2), 1, dim=0), dim=-1).squeeze(0)
+        obs_v = torch.cat([obs_v] * self.n_agent, dim=0).to(self.device)
 
-        states_v = torch.concat([states, states1], dim=1)
-        states_a = torch.concat([states, states1], dim=0)
-        actions = torch.concat([actions, actions1], dim=0)
-        next_states_a = torch.concat([next_states, next_states1], dim=0)
-        next_states_v = torch.concat([next_states, next_states1], dim=1)
-        dones_v = dones
-        rewards = rewards1 + rewards
+        next_obs_v = torch.cat(torch.split(next_obs.permute(1, 0, 2), 1, dim=0), dim=-1).squeeze(0)
+        next_obs_v = torch.cat([next_obs_v] * self.n_agent, dim=0).to(self.device)
+
+        obs_value = obs_value.permute(1, 0, 2).reshape(-1, obs_value.shape[-1]).to(self.device)
+        action = action.permute(1, 0, 2).reshape(-1, action.shape[-1]).to(self.device)
+        action_log_prob = action_log_prob.permute(1, 0, 2).reshape(-1, action_log_prob.shape[-1]).to(self.device)
+
+        # TODO:合作
+        reward = reward.sum(dim=1).reshape(-1, 1)
+        reward = torch.concat([reward] * self.n_agent).to(self.device)
+
+        done = done.permute(1, 0, 2).reshape(-1, done.shape[-1]).to(self.device)
 
         with torch.no_grad():
-            next_state_value = self.critic(next_states_v)  # 下一时刻的state_value  [b,1]
-            td_target = rewards + self.gamma * next_state_value * (1 - dones_v)  # 目标--当前时刻的state_value  [b,1]
-            td_value = self.critic(states_v)  # 预测--当前时刻的state_value  [b,1]
-            td_delta = td_target - td_value  # 时序差分  # [b,1]
+            next_state_value = self.critic(next_obs_v)  # 下一时刻的state_value  [b,1]
+            td_target = reward + self.gamma * next_state_value * (1 - done)  # 目标--当前时刻的state_value  [b,1]
+            td_delta = td_target - obs_value  # 时序差分  # [b,1]
 
             # 计算GAE优势函数，当前状态下某动作相对于平均的优势
             advantage = 0  # 累计一个序列上的优势函数
@@ -97,13 +102,9 @@ class MAPPO:
                 advantage_list.append(advantage)  # 保存每个时刻的优势函数
             advantage_list.reverse()  # 正序
             advantage = torch.tensor(np.array(advantage_list), dtype=torch.float).to(self.device)
-            advantage = torch.concat([advantage, advantage], dim=0)
-            td_target = torch.concat([td_target, td_target], dim=0)
-            states_v = torch.concat([states_v, states_v], dim=0)
-            old_log_probs = torch.log(self.actor(states_a).gather(1, actions))  # [b,1]
 
-        dataset = MappoDataset(states_a, states_v, actions, old_log_probs, advantage, td_target)
-        dataloader = DataLoader(dataset=dataset, batch_size=200, shuffle=True, drop_last=False)
+        dataset = MappoDataset(obs_a, obs_v, action, action_log_prob, advantage, td_target)
+        dataloader = DataLoader(dataset=dataset, batch_size=100, shuffle=True, drop_last=False)
         for i in range(4):
             for step, (states_a, states_v, actions, old_log_probs, advantage, td_target) in enumerate(dataloader):
                 probs = self.actor(states_a)

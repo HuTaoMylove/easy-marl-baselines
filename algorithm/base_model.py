@@ -49,9 +49,10 @@ class ValueNet(nn.Module):  # 评价当前状态的价值
 
 class RNN(nn.Module):
 
-    def __init__(self, n_states, n_outputs, n_hiddens=128):
+    def __init__(self, n_states, n_outputs, n_hiddens=128, use_softmax=False):
         super(RNN, self).__init__()
         self.n_hiddens = n_hiddens
+        self.use_softmax = use_softmax
         self.fc1 = nn.Linear(n_states, n_hiddens)
         self.rnn = nn.GRUCell(n_hiddens, n_hiddens)
         self.fc2 = nn.Linear(n_hiddens, n_outputs)
@@ -59,13 +60,28 @@ class RNN(nn.Module):
     def init_(self, m):
         return init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), 0.1)
 
-    def forward(self, obs, hidden_state):
-        x = f.tanh(self.fc1(obs))
-        h_in = hidden_state.reshape(-1, self.n_hiddens)
-        assert h_in.shape[0] == x.shape[0]
-        h = self.rnn(x, h_in)
-        q = self.fc2(h)
-        return q, h
+    def forward(self, obs, hidden_state, done=None):
+        if done is None:
+            x = f.tanh(self.fc1(obs))
+            assert hidden_state.shape[0] == x.shape[0]
+            hidden_state = self.rnn(x, hidden_state)
+            output = self.fc2(hidden_state)
+            if self.use_softmax:
+                output = torch.nn.functional.softmax(output, dim=-1)
+        else:
+            output = []
+            for obs, mask in zip(obs, done):
+                obs=obs.unsqueeze(0)
+                x = f.tanh(self.fc1(obs))
+                assert hidden_state.shape[0] == x.shape[0]
+                hidden_state = self.rnn(x, hidden_state)
+                q = self.fc2(hidden_state)
+                hidden_state = hidden_state*(1 - mask)
+                if self.use_softmax:
+                    q = torch.nn.functional.softmax(q, dim=-1)
+                output.append(q)
+            output = torch.cat(output, dim=0)
+        return output, hidden_state
 
 
 class QNet(nn.Module):

@@ -1,6 +1,6 @@
 import os.path
 import torch
-from algorithm.ippo import PPO
+from algorithm.ippo import PPO,r_PPO
 from algorithm.ia2c import A2C
 from algorithm.mappo import MAPPO
 from algorithm.iql import IQL
@@ -24,7 +24,7 @@ num_episodes = 50
 device = torch.device('cuda') if torch.cuda.is_available() \
     else torch.device('cpu')
 device = torch.device('cpu')
-algo = 'ia2c'
+algo = 'r_ippo'
 use_render = False
 
 log_dir = Path('./log')
@@ -43,6 +43,11 @@ act_dim = env.action_space[0].n  # 动作数
 def load_agent(algo: str):
     if algo == 'ippo':
         agent = PPO(n_states=obs_dim,
+                    n_actions=act_dim,
+                    device=device
+                    )
+    elif algo == 'r_ippo':
+        agent = r_PPO(n_states=obs_dim,
                     n_actions=act_dim,
                     device=device
                     )
@@ -78,5 +83,5 @@ agent = load_agent(algo)
 if algo in ['iql', 'qmix', 'vdn']:
     runner = q_runner(env, agent, writer, num_update, num_episodes, algo=algo)
 else:
-    runner = ac_runner(env, agent, writer, num_update, num_episodes)
+    runner = ac_runner(env, agent, writer, num_update, num_episodes, algo=algo)
 runner.run()

@@ -5,7 +5,7 @@ import numpy as np
 from utils import init
 
 from torch.utils.data import Dataset, DataLoader
-from algorithm.base_model import PolicyNet, ValueNet
+from algorithm.base_model import PolicyNet, ValueNet, RNN
 
 
 class IppoDataset(Dataset):
@@ -17,17 +17,34 @@ class IppoDataset(Dataset):
         self.td_target = td_target
 
     def __getitem__(self, index):
-        """ 必须实现，作用是:获取索引对应位置的一条数据 :param index: :return: """
         return self.states[index], self.actions[index], self.old_log_probs[index], self.advantage[index], \
                self.td_target[index],
 
     def __len__(self):
-        """ 必须实现，作用是得到数据集的大小 :return: """
         return len(self.states)
 
 
+class r_IppoDataset(Dataset):
+    def __init__(self, states, actions, old_log_probs, advantage, td_target, done, chunklength=16):
+        self.states = states
+        self.actions = actions
+        self.old_log_probs = old_log_probs
+        self.advantage = advantage
+        self.td_target = td_target
+        self.done = done
+        self.chunklength = chunklength
+
+    def __getitem__(self, index):
+        return self.states[index:index + self.chunklength], self.actions[index:index + self.chunklength], \
+               self.old_log_probs[index:index + self.chunklength], self.advantage[index:index + self.chunklength], \
+               self.td_target[index:index + self.chunklength], self.done[index:index + self.chunklength]
+
+    def __len__(self):
+        return len(self.states) - self.chunklength
+
+
 class PPO:
-    def __init__(self, n_states, n_actions, device, n_hiddens=128, actor_lr=3e-4, critic_lr=1e-3):
+    def __init__(self, n_states, n_actions, device, n_agent=2, n_hiddens=128, actor_lr=3e-4, critic_lr=1e-3):
         # 属性分配
         self.n_hiddens = n_hiddens
         self.actor_lr = actor_lr  # 策略网络的学习率
@@ -36,6 +53,7 @@ class PPO:
         self.eps = 0.2  # ppo截断范围缩放因子
         self.gamma = 0.9  # 折扣因子
         self.device = device
+        self.n_agent = n_agent
         # 网络实例化
         self.actor = PolicyNet(n_states, n_hiddens, n_actions).to(device)  # 策略网络
         self.critic = ValueNet(n_states, n_hiddens).to(device)  # 价值网络
@@ -44,45 +62,44 @@ class PPO:
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
 
     # 动作选择
-    def take_action(self, state, isTrain=True):  # [n_states]
-
-        state = torch.tensor([state], dtype=torch.float).to(self.device)  # [1,n_states]
-        probs = self.actor(state)  # 当前状态的动作概率 [b,n_actions]
-        if isTrain:
+    def take_action(self, obs, isTrain=True):  # [n_states]
+        with torch.no_grad():
+            obs = torch.tensor(obs, dtype=torch.float).to(self.device)  # [n_agents,n_states]
+            probs = self.actor(obs)  # 当前状态的动作概率 [b,n_actions]
             action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
-            action = action_dist.sample().item()  # 从概率分布中随机取样 int
-        else:
-            action = torch.argmax(probs).item()
-        return action
+            if isTrain:
+                action = action_dist.sample()  # 从概率分布中随机取样 int
+            else:
+                action = torch.argmax(probs, dim=-1)
+            action_log_prob = action_dist.log_prob(action)
+            obs_value = self.critic(obs)
+            return action.reshape(self.n_agent, -1), action_log_prob.reshape(self.n_agent, -1), obs_value.reshape(
+                self.n_agent, -1)
+
+    def reset(self):
+        return
 
     # 训练
-    def update(self, transition_dict, transition_dict1):
+    def update(self, data):
+        # shape [buffersize,n_agent,dim]
+        obs, next_obs, obs_value, action, action_log_prob, reward, done, eposide_idx = data
 
-        # 取出数据集
-        states = torch.tensor(transition_dict['states'], dtype=torch.float).to(self.device)  # [b,n_states]
-        actions = torch.tensor(transition_dict['actions']).view(-1, 1).to(self.device)  # [b,1]
-        next_states = torch.tensor(transition_dict['next_states'], dtype=torch.float).to(self.device)  # [b,n_states]
-        dones = torch.tensor(transition_dict['dones'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
-        rewards = torch.tensor(transition_dict['rewards'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
+        obs = obs.permute(1, 0, 2).reshape(-1, obs.shape[-1]).to(self.device)
+        next_obs = next_obs.permute(1, 0, 2).reshape(-1, next_obs.shape[-1]).to(self.device)
+        obs_value = obs_value.permute(1, 0, 2).reshape(-1, obs_value.shape[-1]).to(self.device)
+        action = action.permute(1, 0, 2).reshape(-1, action.shape[-1]).to(self.device)
+        action_log_prob = action_log_prob.permute(1, 0, 2).reshape(-1, action_log_prob.shape[-1]).to(self.device)
 
-        states1 = torch.tensor(transition_dict1['states'], dtype=torch.float).to(self.device)  # [b,n_states]
-        actions1 = torch.tensor(transition_dict1['actions']).view(-1, 1).to(self.device)  # [b,1]
-        next_states1 = torch.tensor(transition_dict1['next_states'], dtype=torch.float).to(
-            self.device)  # [b,n_states]
-        dones1 = torch.tensor(transition_dict1['dones'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
-        rewards1 = torch.tensor(transition_dict1['rewards'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
+        # TODO:合作
+        reward = reward.sum(dim=1).reshape(-1, 1)
+        reward = torch.concat([reward] * self.n_agent).to(self.device)
 
-        states = torch.concat([states, states1], dim=0)
-        actions = torch.concat([actions, actions1], dim=0)
-        next_states = torch.concat([next_states, next_states1], dim=0)
-        dones = torch.concat([dones, dones1], dim=0)
-        rewards = torch.concat([rewards, rewards1], dim=0)
+        done = done.permute(1, 0, 2).reshape(-1, done.shape[-1]).to(self.device)
 
         with torch.no_grad():
-            next_state_value = self.critic(next_states)  # 下一时刻的state_value  [b,1]
-            td_target = rewards + self.gamma * next_state_value * (1 - dones)  # 目标--当前时刻的state_value  [b,1]
-            td_value = self.critic(states)  # 预测--当前时刻的state_value  [b,1]
-            td_delta = td_target - td_value  # 时序差分  # [b,1]
+            next_obs_value = self.critic(next_obs)  # 下一时刻的state_value  [b,1]
+            td_target = reward + self.gamma * next_obs_value * (1 - done)  # 目标--当前时刻的state_value  [b,1]
+            td_delta = td_target - obs_value  # 时序差分  # [b,1]
 
             # 计算GAE优势函数，当前状态下某动作相对于平均的优势
             advantage = 0  # 累计一个序列上的优势函数
@@ -93,10 +110,9 @@ class PPO:
                 advantage_list.append(advantage)  # 保存每个时刻的优势函数
             advantage_list.reverse()  # 正序
             advantage = torch.tensor(np.array(advantage_list), dtype=torch.float).to(self.device)
-            old_log_probs = torch.log(self.actor(states).gather(1, actions))  # [b,1]
 
-        dataset = IppoDataset(states, actions, old_log_probs, advantage, td_target)
-        dataloader = DataLoader(dataset=dataset, batch_size=50, shuffle=True, drop_last=False)
+        dataset = IppoDataset(obs, action, action_log_prob, advantage, td_target)
+        dataloader = DataLoader(dataset=dataset, batch_size=100, shuffle=True, drop_last=False)
         for i in range(4):
             for step, (states, actions, old_log_probs, advantage, td_target) in enumerate(dataloader):
                 probs = self.actor(states)
@@ -131,4 +147,119 @@ class PPO:
         return train_info
 
 
+class r_PPO:
+    def __init__(self, n_states, n_actions, device, n_agent=2, n_hiddens=128, actor_lr=3e-4, critic_lr=1e-3):
+        # 属性分配
+        self.n_hiddens = n_hiddens
+        self.actor_lr = actor_lr  # 策略网络的学习率
+        self.critic_lr = critic_lr  # 价值网络的学习率
+        self.lmbda = 0.97  # 优势函数的缩放因子
+        self.eps = 0.2  # ppo截断范围缩放因子
+        self.gamma = 0.9  # 折扣因子
+        self.device = device
+        self.n_agent = n_agent
+        self.batchsize = 10
+        # 网络实例化
+        self.actor = RNN(n_states, n_actions, n_hiddens, use_softmax=True).to(device)  # 策略网络
+        self.critic = RNN(n_states, 1, n_hiddens).to(device)  # 价值网络
+        # 优化器
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
+        self.reset()
 
+    def reset(self):
+        self.actor_r_hidden = torch.zeros([self.n_agent, self.n_hiddens]).to(self.device)
+        self.critic_r_hidden = torch.zeros([self.n_agent, self.n_hiddens]).to(self.device)
+
+    # 动作选择
+    def take_action(self, obs, isTrain=True):  # [n_states]
+        with torch.no_grad():
+            obs = torch.tensor(obs, dtype=torch.float).to(self.device)  # [n_agents,n_states]
+            assert self.n_agent == obs.shape[0]
+            probs, self.actor_r_hidden = self.actor(obs, self.actor_r_hidden)  # 当前状态的动作概率 [b,n_actions]
+            action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
+            if isTrain:
+                action = action_dist.sample()  # 从概率分布中随机取样 int
+            else:
+                action = torch.argmax(probs, dim=-1)
+            action_log_prob = action_dist.log_prob(action)
+            obs_value, self.critic_r_hidden = self.critic(obs, self.critic_r_hidden)
+            return action.reshape(self.n_agent, -1), action_log_prob.reshape(self.n_agent, -1), obs_value.reshape(
+                self.n_agent, -1)
+
+    # 训练
+    def update(self, data):
+        # shape [buffersize,n_agent,dim]
+        obs, next_obs, obs_value, action, action_log_prob, reward, done, eposide_idx = data
+
+        obs = obs.permute(1, 0, 2).reshape(-1, obs.shape[-1]).to(self.device)
+        next_obs = next_obs.permute(1, 0, 2).reshape(-1, next_obs.shape[-1]).to(self.device)
+        obs_value = obs_value.permute(1, 0, 2).reshape(-1, obs_value.shape[-1]).to(self.device)
+        action = action.permute(1, 0, 2).reshape(-1, action.shape[-1]).to(self.device)
+        action_log_prob = action_log_prob.permute(1, 0, 2).reshape(-1, action_log_prob.shape[-1]).to(self.device)
+
+        # TODO:合作
+        reward = reward.sum(dim=1).reshape(-1, 1)
+        reward = torch.concat([reward] * self.n_agent).to(self.device)
+
+        done = done.permute(1, 0, 2).reshape(-1, done.shape[-1]).to(self.device)
+
+        with torch.no_grad():
+            next_obs_value, _ = self.critic(next_obs, torch.zeros([1, self.n_hiddens]).to(self.device),
+                                            done)  # 下一时刻的state_value  [b,1]
+            td_target = reward + self.gamma * next_obs_value * (1 - done)  # 目标--当前时刻的state_value  [b,1]
+            td_delta = td_target - obs_value  # 时序差分  # [b,1]
+
+            # 计算GAE优势函数，当前状态下某动作相对于平均的优势
+            advantage = 0  # 累计一个序列上的优势函数
+            advantage_list = []  # 存放每个时序的优势函数值
+            td_delta = td_delta.cpu().detach().numpy()  # gpu-->numpy
+            for delta in td_delta[::-1]:  # 逆序取出时序差分值
+                advantage = self.gamma * self.lmbda * advantage + delta
+                advantage_list.append(advantage)  # 保存每个时刻的优势函数
+            advantage_list.reverse()  # 正序
+            advantage = torch.tensor(np.array(advantage_list), dtype=torch.float).to(self.device)
+
+        dataset = r_IppoDataset(obs, action, action_log_prob, advantage, td_target, done, chunklength=8)
+        dataloader = DataLoader(dataset=dataset, batch_size=self.batchsize, shuffle=True, drop_last=False)
+        for i in range(2):
+            for step, (states, actions, old_log_probs, advantage, td_target, done) in enumerate(dataloader):
+                states = states.reshape(-1, states.shape[-1])
+                actions = actions.reshape(-1, actions.shape[-1])
+                old_log_probs = old_log_probs.reshape(-1, old_log_probs.shape[-1])
+                advantage = advantage.reshape(-1, advantage.shape[-1])
+                td_target = td_target.reshape(-1, td_target.shape[-1])
+                done = done.squeeze(dim=-1)
+                done[:, -1] = 1
+                done = done.unsqueeze(dim=-1).reshape(-1, 1)
+
+                probs, _ = self.actor(states, torch.zeros([1, self.n_hiddens]), done)
+                log_prob = torch.log(probs.gather(1, actions))
+                entropy = torch.distributions.Categorical(probs).entropy().mean()
+                ratio = torch.exp(log_prob - old_log_probs)
+
+                # clip截断
+                surr1 = ratio * advantage
+                surr2 = torch.clamp(ratio, 1 - self.eps, 1 + self.eps) * advantage
+                td_value, _ = self.critic(states, torch.zeros([1, self.n_hiddens]), done)
+                # 损失计算
+                actor_loss = torch.mean(-torch.min(surr1, surr2)) - entropy * 0.1
+                critic_loss = torch.mean(F.mse_loss(td_value, td_target))
+                # 梯度更新
+                self.actor_optimizer.zero_grad()
+                self.critic_optimizer.zero_grad()
+                actor_loss.backward()
+                critic_loss.backward()
+                nn.utils.clip_grad_norm_(self.actor.parameters(), 1)
+                nn.utils.clip_grad_norm_(self.critic.parameters(), 1)
+                self.actor_optimizer.step()
+                self.critic_optimizer.step()
+
+        train_info = {
+            "ratio": ratio.detach().mean().cpu().item(),
+            "actor_loss": actor_loss.detach().cpu().item(),
+            "critic_loss": critic_loss.detach().cpu().item(),
+            'entropy': entropy.detach().cpu().item()
+        }
+
+        return train_info

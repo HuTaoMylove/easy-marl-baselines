@@ -42,7 +42,6 @@ class q_runner:
 
                 self.buffer.insert(data1, data2)
 
-
                 if all(done):  # 判断当前回合是否都为True，是返回True，不是返回False
                     s = self.env.reset()
                     now_episodes += 1
@@ -76,3 +75,5 @@ class q_runner:
 
             next_s, r, done, info = self.env.step([a_1, a_2])
             terminal = all(done)
+
+
