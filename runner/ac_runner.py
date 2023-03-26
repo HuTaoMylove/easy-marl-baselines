@@ -126,16 +126,13 @@ class ac_runner:
                                        eposide_reward1 / self.num_episodes + eposide_reward2 / self.num_episodes, i)
             self.writer.close()
 
-    # def eval(self):
-    #     s = self.env.reset()  # 状态初始化
-    #     terminal = False  # 结束标记
-    #     while not terminal:
-    #         self.env.render()
-    #         time.sleep(0.3)
-    #         a_1 = self.agent.take_action(s)
-    #
-    #
-    #         next_s, r, done, info = self.env.step([a_1, a_2])
-    #         terminal = all(done)
-
-
+    def eval(self):
+        self.agent.reset()
+        s = self.env.reset()  # 状态初始化
+        terminal = False  # 结束标记
+        while not terminal:
+            self.env.render()
+            time.sleep(0.1)
+            a = self.agent.take_action(s)
+            next_s, r, done, info = self.env.step(a.squeeze(dim=1).numpy())
+            terminal = all(done)

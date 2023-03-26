@@ -113,7 +113,7 @@ class PPO:
 
         dataset = IppoDataset(obs, action, action_log_prob, advantage, td_target)
         dataloader = DataLoader(dataset=dataset, batch_size=100, shuffle=True, drop_last=False)
-        for i in range(4):
+        for i in range(3):
             for step, (states, actions, old_log_probs, advantage, td_target) in enumerate(dataloader):
                 probs = self.actor(states)
                 log_prob = torch.log(probs.gather(1, actions))
@@ -125,7 +125,7 @@ class PPO:
                 surr2 = torch.clamp(ratio, 1 - self.eps, 1 + self.eps) * advantage
                 td_value = self.critic(states)
                 # 损失计算
-                actor_loss = torch.mean(-torch.min(surr1, surr2)) - entropy * 0.1
+                actor_loss = torch.mean(-torch.min(surr1, surr2)) - entropy * 0.01
                 critic_loss = torch.mean(F.mse_loss(td_value, td_target))
                 # 梯度更新
                 self.actor_optimizer.zero_grad()
@@ -158,7 +158,7 @@ class r_PPO:
         self.gamma = 0.9  # 折扣因子
         self.device = device
         self.n_agent = n_agent
-        self.batchsize = 10
+        self.batchsize = 50
         # 网络实例化
         self.actor = RNN(n_states, n_actions, n_hiddens, use_softmax=True).to(device)  # 策略网络
         self.critic = RNN(n_states, 1, n_hiddens).to(device)  # 价值网络
@@ -222,7 +222,7 @@ class r_PPO:
 
         dataset = r_IppoDataset(obs, action, action_log_prob, advantage, td_target, done, chunklength=8)
         dataloader = DataLoader(dataset=dataset, batch_size=self.batchsize, shuffle=True, drop_last=False)
-        for i in range(2):
+        for i in range(3):
             for step, (states, actions, old_log_probs, advantage, td_target, done) in enumerate(dataloader):
                 states = states.reshape(-1, states.shape[-1])
                 actions = actions.reshape(-1, actions.shape[-1])
@@ -243,7 +243,7 @@ class r_PPO:
                 surr2 = torch.clamp(ratio, 1 - self.eps, 1 + self.eps) * advantage
                 td_value, _ = self.critic(states, torch.zeros([1, self.n_hiddens]), done)
                 # 损失计算
-                actor_loss = torch.mean(-torch.min(surr1, surr2)) - entropy * 0.1
+                actor_loss = torch.mean(-torch.min(surr1, surr2)) - entropy * 0.01
                 critic_loss = torch.mean(F.mse_loss(td_value, td_target))
                 # 梯度更新
                 self.actor_optimizer.zero_grad()

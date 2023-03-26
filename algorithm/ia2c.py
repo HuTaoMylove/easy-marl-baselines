@@ -84,7 +84,7 @@ class A2C:
         surr2 = torch.clamp(ratio, 1 - self.eps, 1 + self.eps) * advantage
         td_value = self.critic(obs)
         # 损失计算
-        actor_loss = torch.mean(-torch.min(surr1, surr2)) - entropy * 0.1
+        actor_loss = torch.mean(-torch.min(surr1, surr2)) - entropy * 0.01
         critic_loss = torch.mean(F.mse_loss(td_value, td_target))
         # 梯度更新
         self.actor_optimizer.zero_grad()
