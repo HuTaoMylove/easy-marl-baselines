@@ -5,9 +5,10 @@ import numpy as np
 from utils import init
 
 from torch.utils.data import Dataset, DataLoader
+from algorithm.base_model import PolicyNet, ValueNet
 
 
-class MyDataset(Dataset):
+class MappoDataset(Dataset):
     def __init__(self, states_a, states_v, actions, old_log_probs, advantage, td_target):
         self.states_a = states_a
         self.states_v = states_v
@@ -18,51 +19,13 @@ class MyDataset(Dataset):
 
     def __getitem__(self, index):
         """ 必须实现，作用是:获取索引对应位置的一条数据 :param index: :return: """
-        return self.states_a[index], self.states_v[index],self.actions[index], self.old_log_probs[index], self.advantage[index], \
+        return self.states_a[index], self.states_v[index], self.actions[index], self.old_log_probs[index], \
+               self.advantage[index], \
                self.td_target[index],
 
     def __len__(self):
         """ 必须实现，作用是得到数据集的大小 :return: """
         return len(self.states_v)
-
-
-class PolicyNet(nn.Module):  # 输入当前状态，输出动作的概率分布
-    def init_(self, m):
-        return init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), 0.1)
-
-    def __init__(self, n_states, n_hiddens, n_actions):
-        super(PolicyNet, self).__init__()
-        self.fc1 = self.init_(nn.Linear(n_states, n_hiddens))
-        self.fc2 = self.init_(nn.Linear(n_hiddens, n_hiddens))
-        self.fc3 = self.init_(nn.Linear(n_hiddens, n_actions))
-
-    def forward(self, x):  # [b,n_states]
-        x = self.fc1(x)  # [b,n_states]-->[b,n_hiddens]
-        x = F.tanh(x)
-        x = self.fc2(x)  # [b,n_hiddens]-->[b,n_hiddens]
-        x = F.tanh(x)
-        x = self.fc3(x)  # [b,n_hiddens]-->[b,n_actions]
-        x = F.softmax(x, dim=1)  # 每种动作选择的概率
-        return x
-
-
-class ValueNet(nn.Module):  # 评价当前状态的价值
-    def init_(self, m):
-        return init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), 0.1)
-
-    def __init__(self, n_states, n_hiddens):
-        super(ValueNet, self).__init__()
-        self.fc1 = self.init_(nn.Linear(n_states, n_hiddens))
-        self.fc2 = self.init_(nn.Linear(n_hiddens, n_hiddens))
-        self.fc3 = self.init_(nn.Linear(n_hiddens, 1))
-
-    def forward(self, x):  # [b,n_states]
-        x = self.fc1(x)  # [b,n_states]-->[b,n_hiddens]
-        x = F.relu(x)
-        x = self.fc2(x)  # [b,n_hiddens]-->[b,n_hiddens]
-        x = F.relu(x)
-        x = self.fc3(x)  # [b,n_hiddens]-->[b,1]
-        return x
 
 
 class MAPPO:
@@ -83,11 +46,15 @@ class MAPPO:
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
 
     # 动作选择
-    def take_action(self, state, max_act=False):  # [n_states]
+    def take_action(self, state, isTrain=True):  # [n_states]
+
         state = torch.tensor([state], dtype=torch.float).to(self.device)  # [1,n_states]
         probs = self.actor(state)  # 当前状态的动作概率 [b,n_actions]
-        action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
-        action = action_dist.sample().item()  # 从概率分布中随机取样 int
+        if isTrain:
+            action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
+            action = action_dist.sample().item()  # 从概率分布中随机取样 int
+        else:
+            action = torch.argmax(probs).item()
         return action
 
     # 训练
@@ -135,8 +102,8 @@ class MAPPO:
             states_v = torch.concat([states_v, states_v], dim=0)
             old_log_probs = torch.log(self.actor(states_a).gather(1, actions))  # [b,1]
 
-        dataset = MyDataset(states_a, states_v, actions, old_log_probs, advantage, td_target)
-        dataloader = DataLoader(dataset=dataset, batch_size=50, shuffle=True, drop_last=False)
+        dataset = MappoDataset(states_a, states_v, actions, old_log_probs, advantage, td_target)
+        dataloader = DataLoader(dataset=dataset, batch_size=200, shuffle=True, drop_last=False)
         for i in range(4):
             for step, (states_a, states_v, actions, old_log_probs, advantage, td_target) in enumerate(dataloader):
                 probs = self.actor(states_a)

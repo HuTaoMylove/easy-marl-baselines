@@ -3,51 +3,12 @@ from torch import nn
 from torch.nn import functional as F
 import numpy as np
 from utils import init
+from algorithm.base_model import PolicyNet, ValueNet
 
 
 # ----------------------------------------- #
 # 策略网络--actor
 # ----------------------------------------- #
-
-class PolicyNet(nn.Module):  # 输入当前状态，输出动作的概率分布
-    def init_(self, m):
-        return init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), 0.1)
-
-    def __init__(self, n_states, n_hiddens, n_actions):
-        super(PolicyNet, self).__init__()
-        self.fc1 = self.init_(nn.Linear(n_states, n_hiddens))
-        self.fc2 = self.init_(nn.Linear(n_hiddens, n_hiddens))
-        self.fc3 = self.init_(nn.Linear(n_hiddens, n_actions))
-
-    def forward(self, x):  # [b,n_states]
-        x = self.fc1(x)  # [b,n_states]-->[b,n_hiddens]
-        x = F.tanh(x)
-        x = self.fc2(x)  # [b,n_hiddens]-->[b,n_hiddens]
-        x = F.tanh(x)
-        x = self.fc3(x)  # [b,n_hiddens]-->[b,n_actions]
-        x = F.softmax(x, dim=1)  # 每种动作选择的概率
-        return x
-
-
-class ValueNet(nn.Module):  # 评价当前状态的价值
-    def init_(self, m):
-        return init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), 0.1)
-
-    def __init__(self, n_states, n_hiddens):
-        super(ValueNet, self).__init__()
-        self.fc1 = self.init_(nn.Linear(n_states, n_hiddens))
-        self.fc2 = self.init_(nn.Linear(n_hiddens, n_hiddens))
-        self.fc3 = self.init_(nn.Linear(n_hiddens, 1))
-
-    def forward(self, x):  # [b,n_states]
-        x = self.fc1(x)  # [b,n_states]-->[b,n_hiddens]
-        x = F.relu(x)
-        x = self.fc2(x)  # [b,n_hiddens]-->[b,n_hiddens]
-        x = F.relu(x)
-        x = self.fc3(x)  # [b,n_hiddens]-->[b,1]
-        return x
-
-
 class A2C:
     def __init__(self, n_states, n_actions, device, n_hiddens=128, actor_lr=3e-4, critic_lr=1e-3):
         # 属性分配
@@ -66,16 +27,19 @@ class A2C:
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
 
     # 动作选择
-    def take_action(self, state, max_act=False):  # [n_states]
+    def take_action(self, state, isTrain=True):  # [n_states]
+
         state = torch.tensor([state], dtype=torch.float).to(self.device)  # [1,n_states]
         probs = self.actor(state)  # 当前状态的动作概率 [b,n_actions]
-        action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
-        action = action_dist.sample().item()  # 从概率分布中随机取样 int
+        if isTrain:
+            action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
+            action = action_dist.sample().item()  # 从概率分布中随机取样 int
+        else:
+            action = torch.argmax(probs).item()
         return action
 
     # 训练
     def update(self, transition_dict, transition_dict1):
-
         # 取出数据集
         states = torch.tensor(transition_dict['states'], dtype=torch.float).to(self.device)  # [b,n_states]
         actions = torch.tensor(transition_dict['actions']).view(-1, 1).to(self.device)  # [b,1]
@@ -86,9 +50,10 @@ class A2C:
         states1 = torch.tensor(transition_dict1['states'], dtype=torch.float).to(self.device)  # [b,n_states]
         actions1 = torch.tensor(transition_dict1['actions']).view(-1, 1).to(self.device)  # [b,1]
         next_states1 = torch.tensor(transition_dict1['next_states'], dtype=torch.float).to(
-                self.device)  # [b,n_states]
+            self.device)  # [b,n_states]
         dones1 = torch.tensor(transition_dict1['dones'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
         rewards1 = torch.tensor(transition_dict1['rewards'], dtype=torch.float).view(-1, 1).to(self.device)  # [b,1]
+
         states = torch.concat([states, states1], dim=0)
         actions = torch.concat([actions, actions1], dim=0)
         next_states = torch.concat([next_states, next_states1], dim=0)
@@ -116,7 +81,7 @@ class A2C:
         log_prob = torch.log(probs.gather(1, actions))
         entropy = torch.distributions.Categorical(probs).entropy().mean()
         ratio = torch.exp(log_prob - old_log_probs)
-        #ratio==1 没啥用
+        # ratio==1 没啥用
 
         # clip截断
         surr1 = ratio * advantage
