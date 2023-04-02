@@ -8,7 +8,8 @@ from algorithm.base_model import QNet
 
 
 class VDN:
-    def __init__(self, n_states, n_actions, device, lr=3e-4):
+    def __init__(self, n_states, n_actions, device, use_importance_sampling=True, lr=3e-4, epsilon=1.0, eps_end=0.01,
+                 eps_dec=5e-7):
         self.gamma = 0.99
         self.device = device
         self.lr = lr
@@ -16,6 +17,15 @@ class VDN:
         self.q_target = QNet(state_dim=n_states, action_dim=n_actions).to(device)
         self.q_optimizer = torch.optim.Adam(self.q_eval.parameters(), lr=self.lr)
         self.update_network_parameters(tau=1)
+        self.use_importance_sampling = use_importance_sampling
+        self.epsilon = epsilon
+        self.eps_min = eps_end
+        self.eps_dec = eps_dec
+        self.n_actions=n_actions
+
+    def decrement_epsilon(self):
+        self.epsilon = self.epsilon - self.eps_dec \
+            if self.epsilon > self.eps_min else self.eps_min
 
     def update_network_parameters(self, tau=0.05):
         for q_target_params, q_eval_params in zip(self.q_target.parameters(), self.q_eval.parameters()):
@@ -24,19 +34,18 @@ class VDN:
     def take_action(self, observation, isTrain=True):
         state = torch.tensor([observation], dtype=torch.float).to(self.device)
         q = self.q_eval.forward(state)
-        if isTrain:
-            probs = torch.nn.functional.softmax(q, dim=-1)
-            action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
-            action = action_dist.sample().item()  # 从概率分布中随机取样 int
-        else:
-            action = torch.argmax(q).item()
+        action = torch.argmax(q).item()
+
+        if (np.random.random() < self.epsilon) and isTrain:
+            action = np.random.choice(self.n_actions)
+
         return action
 
     def update(self, buffer: vdn_buffer):
         if not buffer.ready():
             return None
 
-        states1, actions1, rewards1, states_1, dones1, states2, actions2, rewards2, states_2, dones2 = buffer.sample_buffer()
+        states1, actions1, rewards1, states_1, dones1, states2, actions2, rewards2, states_2, dones2 = buffer.sample_buffer(self.use_importance_sampling)
         batch_idx = np.arange(buffer.batch_size)
 
         states_tensor1 = torch.tensor(states1, dtype=torch.float).to(self.device)

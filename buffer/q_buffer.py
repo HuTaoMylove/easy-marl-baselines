@@ -19,6 +19,7 @@ class iql_buffer:
         s2, a_2, next_s2, done2, r2 = data2
         self.state_memory[mem_idx] = s1
         self.action_memory[mem_idx] = a_1
+        # TODO：合作
         self.reward_memory[mem_idx] = r1 + r2
         self.next_state_memory[mem_idx] = next_s1
         self.dones_memory[mem_idx] = done1
@@ -31,10 +32,14 @@ class iql_buffer:
         self.dones_memory[mem_idx] = done2
         self.mem_cnt += 1
 
-    def sample_buffer(self):
+    def sample_buffer(self, use_importance_sampling=False):
         mem_len = min(self.mem_size, self.mem_cnt)
-
-        batch = np.random.choice(mem_len, self.batch_size, replace=False)
+        if use_importance_sampling:
+            batch = np.random.choice(mem_len, self.batch_size, replace=False,
+                                     p=(np.exp(np.abs(self.reward_memory[:mem_len])) / np.exp(
+                                         np.abs(self.reward_memory[:mem_len])).sum()).tolist())
+        else:
+            batch = np.random.choice(mem_len, self.batch_size, replace=False)
 
         states = self.state_memory[batch]
         actions = self.action_memory[batch]
@@ -84,10 +89,15 @@ class vdn_buffer:
         self.dones_memory2[mem_idx] = done2
         self.mem_cnt2 += 1
 
-    def sample_buffer(self):
+    def sample_buffer(self, use_importance_sampling=False):
         mem_len = min(self.mem_size, self.mem_cnt1)
 
-        batch = np.random.choice(mem_len, self.batch_size, replace=False)
+        if use_importance_sampling:
+            batch = np.random.choice(mem_len, self.batch_size, replace=False,
+                                     p=(np.exp(np.abs(self.reward_memory1[:mem_len])+np.abs(self.reward_memory2[:mem_len])) / np.exp(
+                                         np.abs(np.abs(self.reward_memory1[:mem_len])+np.abs(self.reward_memory2[:mem_len]))).sum()).tolist())
+        else:
+            batch = np.random.choice(mem_len, self.batch_size, replace=False)
 
         states1 = self.state_memory1[batch]
         actions1 = self.action_memory1[batch]

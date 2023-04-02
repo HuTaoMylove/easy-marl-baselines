@@ -23,9 +23,8 @@ num_update = 10000  # 回合数
 num_episodes = 50
 device = torch.device('cuda') if torch.cuda.is_available() \
     else torch.device('cpu')
-device = torch.device('cpu')
-algo = 'r_mappo'
 use_render = False
+algo='vdn_is'
 
 log_dir = Path('./log')
 log_dir = log_dir / env_name / algo
@@ -36,6 +35,13 @@ writer = SummaryWriter(log_dir=str(log_dir))
 
 # 创建Combat环境，格子世界的大小为15x15，己方智能体和敌方智能体数量都为2
 env = generate_env(env_name)
+
+env.seed(2023)
+np.random.seed(2023)
+torch.cuda.manual_seed(2023)
+torch.cuda.manual_seed_all(2023)
+torch.manual_seed(2023)
+
 obs_dim = env.observation_space[0].shape[0]  # 状态数
 act_dim = env.action_space[0].n  # 动作数
 
@@ -71,9 +77,21 @@ def load_agent(algo: str):
                     n_actions=act_dim,
                     device=device
                     )
+    elif algo == 'iql_is':
+        agent = IQL(n_states=obs_dim,
+                    n_actions=act_dim,
+                    use_importance_sampling=True,
+                    device=device
+                    )
     elif algo == 'vdn':
         agent = VDN(n_states=obs_dim,
                     n_actions=act_dim,
+                    device=device
+                    )
+    elif algo == 'vdn_is':
+        agent = VDN(n_states=obs_dim,
+                    n_actions=act_dim,
+                    use_importance_sampling=True,
                     device=device
                     )
     elif algo == 'qmix':
@@ -85,7 +103,7 @@ def load_agent(algo: str):
 
 
 agent = load_agent(algo)
-if algo in ['iql', 'qmix', 'vdn']:
+if algo in ['iql','iql_is','qmix', 'vdn','vdn_is']:
     runner = q_runner(env, agent, writer, num_update, num_episodes, algo=algo)
 else:
     runner = ac_runner(env, agent, writer, num_update, num_episodes, algo=algo)

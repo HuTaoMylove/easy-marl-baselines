@@ -71,12 +71,12 @@ class RNN(nn.Module):
         else:
             output = []
             for obs, mask in zip(obs, done):
-                obs=obs.unsqueeze(0)
+                obs = obs.unsqueeze(0)
                 x = f.tanh(self.fc1(obs))
                 assert hidden_state.shape[0] == x.shape[0]
                 hidden_state = self.rnn(x, hidden_state)
                 q = self.fc2(hidden_state)
-                hidden_state = hidden_state*(1 - mask)
+                hidden_state = hidden_state * (1 - mask)
                 if self.use_softmax:
                     q = torch.nn.functional.softmax(q, dim=-1)
                 output.append(q)
@@ -90,6 +90,7 @@ class QNet(nn.Module):
 
         self.fc1 = self.init_(nn.Linear(state_dim, hidden_dim))
         self.fc2 = self.init_(nn.Linear(hidden_dim, hidden_dim))
+        self.fc3 = self.init_(nn.Linear(hidden_dim, hidden_dim))
         self.q = self.init_(nn.Linear(hidden_dim, action_dim))
 
     def init_(self, m):
@@ -98,6 +99,7 @@ class QNet(nn.Module):
     def forward(self, state):
         x = torch.tanh(self.fc1(state))
         x = torch.tanh(self.fc2(x))
+        x = torch.tanh(self.fc3(x))
         q = self.q(x)
 
         return q

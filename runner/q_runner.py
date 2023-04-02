@@ -11,7 +11,7 @@ from buffer.q_buffer import iql_buffer, vdn_buffer
 
 
 class q_runner:
-    def __init__(self, env, agent, writer, num_update=10000, num_episodes=50, buffer_max_size=1000000, batch_size=256,
+    def __init__(self, env, agent, writer, num_update=10000, num_episodes=50, buffer_max_size=100000, batch_size=256,
                  algo='iql'):
         self.env = env
         self.agent = agent
@@ -19,9 +19,9 @@ class q_runner:
         self.num_update = num_update
         self.num_episodes = num_episodes
         obs_dim = env.observation_space[0].shape[0]  # 状态数 = env.observation_space[0].shape[0]
-        if algo == 'iql':
+        if algo in ['iql', 'iql_is']:
             self.buffer = iql_buffer(obs_dim=obs_dim, max_size=buffer_max_size, batch_size=batch_size)
-        elif algo in ['vdn', 'qmix']:
+        elif algo in ['vdn', 'vdn_is', 'qmix']:
             self.buffer = vdn_buffer(obs_dim=obs_dim, max_size=buffer_max_size, batch_size=batch_size)
 
     def run(self):
@@ -75,5 +75,3 @@ class q_runner:
 
             next_s, r, done, info = self.env.step([a_1, a_2])
             terminal = all(done)
-
-

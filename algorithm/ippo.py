@@ -35,12 +35,13 @@ class r_IppoDataset(Dataset):
         self.chunklength = chunklength
 
     def __getitem__(self, index):
+        index=index*self.chunklength
         return self.states[index:index + self.chunklength], self.actions[index:index + self.chunklength], \
                self.old_log_probs[index:index + self.chunklength], self.advantage[index:index + self.chunklength], \
                self.td_target[index:index + self.chunklength], self.done[index:index + self.chunklength]
 
     def __len__(self):
-        return len(self.states) - self.chunklength
+        return len(self.states)//self.chunklength
 
 
 class PPO:
@@ -158,7 +159,7 @@ class r_PPO:
         self.gamma = 0.9  # 折扣因子
         self.device = device
         self.n_agent = n_agent
-        self.batchsize = 50
+        self.batchsize = 6
         # 网络实例化
         self.actor = RNN(n_states, n_actions, n_hiddens, use_softmax=True).to(device)  # 策略网络
         self.critic = RNN(n_states, 1, n_hiddens).to(device)  # 价值网络
@@ -220,7 +221,7 @@ class r_PPO:
             advantage_list.reverse()  # 正序
             advantage = torch.tensor(np.array(advantage_list), dtype=torch.float).to(self.device)
 
-        dataset = r_IppoDataset(obs, action, action_log_prob, advantage, td_target, done, chunklength=8)
+        dataset = r_IppoDataset(obs, action, action_log_prob, advantage, td_target, done, chunklength=16)
         dataloader = DataLoader(dataset=dataset, batch_size=self.batchsize, shuffle=True, drop_last=False)
         for i in range(3):
             for step, (states, actions, old_log_probs, advantage, td_target, done) in enumerate(dataloader):

@@ -8,14 +8,24 @@ from algorithm.base_model import QNet
 
 
 class IQL:
-    def __init__(self, n_states, n_actions, device, lr=3e-4):
+    def __init__(self, n_states, n_actions, device, use_importance_sampling=False, lr=3e-4, epsilon=1.0, eps_end=0.01,
+                 eps_dec=5e-7):
         self.gamma = 0.99
         self.device = device
         self.lr = lr
+        self.epsilon = epsilon
+        self.eps_min = eps_end
+        self.eps_dec = eps_dec
         self.q_eval = QNet(state_dim=n_states, action_dim=n_actions).to(device)
         self.q_target = QNet(state_dim=n_states, action_dim=n_actions).to(device)
         self.q_optimizer = torch.optim.Adam(self.q_eval.parameters(), lr=self.lr)
         self.update_network_parameters(tau=1)
+        self.n_actions = n_actions
+        self.use_importance_sampling = use_importance_sampling
+
+    def decrement_epsilon(self):
+        self.epsilon = self.epsilon - self.eps_dec \
+            if self.epsilon > self.eps_min else self.eps_min
 
     def update_network_parameters(self, tau=0.05):
         for q_target_params, q_eval_params in zip(self.q_target.parameters(), self.q_eval.parameters()):
@@ -24,19 +34,18 @@ class IQL:
     def take_action(self, observation, isTrain=True):
         state = torch.tensor([observation], dtype=torch.float).to(self.device)
         q = self.q_eval.forward(state)
-        if isTrain:
-            probs = torch.nn.functional.softmax(q, dim=-1)
-            action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
-            action = action_dist.sample().item()  # 从概率分布中随机取样 int
-        else:
-            action = torch.argmax(q).item()
+        action = torch.argmax(q).item()
+
+        if (np.random.random() < self.epsilon) and isTrain:
+            action = np.random.choice(self.n_actions)
+
         return action
 
     def update(self, buffer: iql_buffer):
         if not buffer.ready():
             return None
 
-        states, actions, rewards, next_states, dones = buffer.sample_buffer()
+        states, actions, rewards, next_states, dones = buffer.sample_buffer(self.use_importance_sampling)
         batch_idx = np.arange(buffer.batch_size)
 
         states_tensor = torch.tensor(states, dtype=torch.float).to(self.device)
@@ -60,4 +69,5 @@ class IQL:
         }
 
         self.update_network_parameters()
+        self.decrement_epsilon()
         return train_info
