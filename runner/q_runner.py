@@ -45,9 +45,10 @@ class q_runner:
                 if all(done):  # 判断当前回合是否都为True，是返回True，不是返回False
                     s = self.env.reset()
                     now_episodes += 1
+                    train_info = self.agent.update(self.buffer)
                 else:
                     s = next_s  # 状态更新
-                if np.random.rand(1) < 0.5:
+                if np.random.rand(1) < 0.01:
                     train_info = self.agent.update(self.buffer)
 
                 eposide_reward1 += r[0]

@@ -9,7 +9,7 @@ from algorithm.base_model import QNet
 
 class IQL:
     def __init__(self, n_states, n_actions, device, use_importance_sampling=False, lr=3e-4, epsilon=1.0, eps_end=0.01,
-                 eps_dec=5e-7):
+                 eps_dec=5e-4):
         self.gamma = 0.99
         self.device = device
         self.lr = lr
@@ -27,7 +27,7 @@ class IQL:
         self.epsilon = self.epsilon - self.eps_dec \
             if self.epsilon > self.eps_min else self.eps_min
 
-    def update_network_parameters(self, tau=0.05):
+    def update_network_parameters(self, tau=0.9):
         for q_target_params, q_eval_params in zip(self.q_target.parameters(), self.q_eval.parameters()):
             q_target_params.data.copy_(tau * q_eval_params + (1 - tau) * q_target_params)
 

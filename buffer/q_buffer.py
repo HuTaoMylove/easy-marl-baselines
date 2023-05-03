@@ -94,8 +94,8 @@ class vdn_buffer:
 
         if use_importance_sampling:
             batch = np.random.choice(mem_len, self.batch_size, replace=False,
-                                     p=(np.exp(np.abs(self.reward_memory1[:mem_len])+np.abs(self.reward_memory2[:mem_len])) / np.exp(
-                                         np.abs(np.abs(self.reward_memory1[:mem_len])+np.abs(self.reward_memory2[:mem_len]))).sum()).tolist())
+                                     p=(np.exp(-((self.reward_memory1[:mem_len]<0)*self.reward_memory1[:mem_len]+(self.reward_memory1[:mem_len]<0)*self.reward_memory2[:mem_len]))/
+                                       (np.exp(-((self.reward_memory1[:mem_len]<0)*self.reward_memory1[:mem_len]+(self.reward_memory1[:mem_len]<0)*self.reward_memory2[:mem_len])).sum())).tolist())
         else:
             batch = np.random.choice(mem_len, self.batch_size, replace=False)
 

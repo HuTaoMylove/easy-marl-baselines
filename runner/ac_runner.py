@@ -10,7 +10,7 @@ import numpy as np
 
 
 class ac_runner:
-    def __init__(self, env, agent, writer, num_update=10000, num_episodes=50, algo='ippo'):
+    def __init__(self, env, agent, writer, num_update=5000, num_episodes=3, algo='ippo'):
         self.env = env
         self.agent = agent
         self.writer = writer
@@ -85,7 +85,6 @@ class ac_runner:
                     # time.sleep(0.1)
                 print('epoch:', i)
                 # 回合训练
-
                 for k, v in train_info.items():
                     self.writer.add_scalar('train/' + k, v, i)
                 self.writer.add_scalar("train/mean_epo_reward1", eposide_reward1 / self.num_episodes, i)

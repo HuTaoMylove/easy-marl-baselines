@@ -59,7 +59,8 @@ class QMixNet(nn.Module):
 
 
 class QMIX:
-    def __init__(self, n_states, n_actions, device, lr=3e-4):
+    def __init__(self, n_states, n_actions, device, lr=3e-4,epsilon=1.0, eps_end=0.01,
+                 eps_dec=5e-4):
         self.gamma = 0.99
         self.device = device
         self.lr = lr
@@ -67,12 +68,18 @@ class QMIX:
         self.q_target = QNet(state_dim=n_states, action_dim=n_actions).to(device)
         self.eval_Qmix = QMixNet(state_dim=n_states)
         self.target_Qmix = QMixNet(state_dim=n_states)
-
+        self.epsilon = epsilon
+        self.eps_min = eps_end
+        self.eps_dec = eps_dec
+        self.n_actions=n_actions
         self.q_optimizer = torch.optim.Adam(itertools.chain(self.q_eval.parameters(), self.eval_Qmix.parameters()),
                                             lr=self.lr)
         self.update_network_parameters(tau=1)
+    def decrement_epsilon(self):
+        self.epsilon = self.epsilon - self.eps_dec \
+            if self.epsilon > self.eps_min else self.eps_min
 
-    def update_network_parameters(self, tau=0.05):
+    def update_network_parameters(self, tau=0.9):
         for q_target_params, q_eval_params in zip(self.q_target.parameters(), self.q_eval.parameters()):
             q_target_params.data.copy_(tau * q_eval_params + (1 - tau) * q_target_params)
         for q_target_params, q_eval_params in zip(self.target_Qmix.parameters(), self.eval_Qmix.parameters()):
@@ -81,10 +88,8 @@ class QMIX:
     def take_action(self, observation, isTrain=True):
         state = torch.tensor([observation], dtype=torch.float).to(self.device)
         q = self.q_eval.forward(state)
-        if isTrain:
-            probs = torch.nn.functional.softmax(q, dim=-1)
-            action_dist = torch.distributions.Categorical(probs)  # 构造概率分布
-            action = action_dist.sample().item()  # 从概率分布中随机取样 int
+        if (np.random.random() < self.epsilon) and isTrain:
+            action = np.random.choice(self.n_actions)
         else:
             action = torch.argmax(q).item()
         return action
@@ -114,8 +119,7 @@ class QMIX:
 
         targets = rewards_tensor1 + rewards_tensor2 + self.gamma * q_total_target
         loss = F.mse_loss(q_total_eval, targets.detach())
-        if loss.item() > 100:
-            print(1)
+
         self.q_optimizer.zero_grad()
         loss.backward()
         self.q_optimizer.step()
@@ -124,4 +128,5 @@ class QMIX:
         }
 
         self.update_network_parameters()
+        self.decrement_epsilon()
         return train_info

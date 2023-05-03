@@ -29,7 +29,7 @@ def generate_env(env_name: str):
         full_observable = getattr(env_fig, 'full_observable', False)
         env = Combat(grid_shape=grid_size, n_agents=team_size, n_opponents=team_size, full_observable=full_observable)
     elif env_name == 'PongDuel':
-        max_rounds = getattr(env_fig, 'max_rounds', 20)
+        max_rounds = getattr(env_fig, 'max_rounds', 40)
         env = PongDuel(max_rounds=max_rounds)
     elif env_name == 'Switch':
         team_size = getattr(env_fig, 'team_size', 2)
