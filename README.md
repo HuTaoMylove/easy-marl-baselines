@@ -1,0 +1,2 @@
+# easyMARLbaseline
+蒟蒻的部分毕设，基于最近的magym平台实现了一些简单的算法，主要分为vdn类和ppo类
